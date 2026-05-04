@@ -23,19 +23,24 @@ def load_data(token=None):
         df_wide = df.pivot(columns='Ticker', values='Close')
     else:
         df_wide = df
+    # Avoid log(0) or negative prices
+    df_wide = df_wide[df_wide > 0].dropna(axis=1, how='all')
     rets = np.log(df_wide / df_wide.shift(1)).dropna()
     return rets
 
 def upload_results(local_path, remote_path, token):
+    """Upload a file (text or binary) to HF dataset."""
     fs = HfFileSystem(token=token)
-    with fs.open(f"datasets/{OUTPUT_REPO}/{remote_path}", "w") as f:
-        if str(local_path).endswith('.json'):
+    local_path = Path(local_path)
+    remote_full = f"datasets/{OUTPUT_REPO}/{remote_path}"
+    # Determine if it's a text file
+    is_text = local_path.suffix in ['.json', '.csv', '.txt', '.yaml', '.yml']
+    mode = 'w' if is_text else 'wb'
+    with fs.open(remote_full, mode) as f:
+        if is_text:
             with open(local_path, 'r') as src:
-                f.write(src.read())
-        elif str(local_path).endswith('.csv'):
-            with open(local_path, 'rb') as src:
                 f.write(src.read())
         else:
             with open(local_path, 'rb') as src:
                 f.write(src.read())
-    print(f"Uploaded {local_path} -> {OUTPUT_REPO}/{remote_path}")
+    print(f"Uploaded {local_path} -> {remote_full}")
