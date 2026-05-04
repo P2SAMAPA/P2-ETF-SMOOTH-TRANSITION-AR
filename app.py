@@ -182,7 +182,15 @@ with tab_diag:
             "nonlinear",
         ]
         st.dataframe(
-            diag_sub[display_cols].sort_values("lm_pvalue"),
+            diag_sub[display_cols]
+            .sort_values("lm_pvalue")
+            .style.format(
+                {
+                    "lm_pvalue": "{:.4f}",
+                    "reset_pvalue": "{:.4f}",
+                    "tsay_pvalue": "{:.4f}",
+                }
+            ),
             use_container_width=True,
             hide_index=True,
         )
