@@ -53,6 +53,29 @@ def main() -> None:
     args = parser.parse_args()
 
     token = os.environ.get("HF_TOKEN")
+
+    # Download model summaries from HF (training jobs upload there, not to disk)
+    from huggingface_hub import hf_hub_download
+    from utils import OUTPUT_REPO
+
+    for model_type in ["setar", "lstar", "estar"]:
+        local_dir = Path(args.models) / model_type
+        local_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            path = hf_hub_download(
+                repo_id=OUTPUT_REPO,
+                filename=f"{model_type}/summary.json",
+                repo_type="dataset",
+                token=token,
+                local_dir=".",
+            )
+            import shutil
+
+            shutil.copy(path, local_dir / "summary.json")
+            print(f"Downloaded {model_type}/summary.json")
+        except Exception as e:
+            print(f"Could not download {model_type}/summary.json: {e}")
+
     returns = load_data(token=token)
 
     output_dir = Path(args.output)
