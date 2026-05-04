@@ -1,0 +1,25 @@
+data:
+  tickers:
+    FI_COMMODITIES: ["TLT", "VCIT", "LQD", "HYG", "VNQ", "GLD", "SLV"]
+    EQUITY_SECTORS: ["SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "GDX", "XME", "IWF", "XSD", "XBI", "IWM"]
+    COMBINED: []  # will be generated as union of both
+  start_date: "2008-01-01"
+  end_date: "2026-12-31"
+
+models:
+  setar:
+    p: [1, 2, 3]
+    d: [1, 2, 5]
+  lstar:
+    p: [1, 2]
+    d: [1, 2]
+  estar:
+    p: [1, 2]
+    d: [1, 2]
+
+backtest:
+  window_size: 252
+  step_size: 63
+
+diagnostics:
+  linearity_p_values: [0.01, 0.05]
