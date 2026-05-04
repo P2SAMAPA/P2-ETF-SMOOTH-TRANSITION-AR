@@ -24,13 +24,25 @@ def load_data(token: str | None = None) -> pd.DataFrame:
     )
     df = pd.read_parquet(file_path)
 
-    # Normalise index — master data has DatetimeIndex or a Date column
+    # Normalise to a flat DataFrame with Date as index
+    # Case 1: DatetimeIndex already set
     if isinstance(df.index, pd.DatetimeIndex):
-        df = df.reset_index().rename(columns={"index": "Date"})
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.sort_values("Date").set_index("Date")
+        df.index.name = "Date"
+    # Case 2: Date is a column
+    elif "Date" in df.columns:
+        df = df.set_index("Date")
+    # Case 3: index is named something else but is datetime-like
+    else:
+        df.index = pd.to_datetime(df.index)
+        df.index.name = "Date"
 
-    # Data is already closing prices with tickers as columns — forward-fill gaps
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
+
+    # Drop any non-numeric columns (e.g. macro text fields)
+    df = df.select_dtypes(include=[np.number])
+
+    # Forward-fill gaps
     prices = df.ffill()
 
     # Keep only columns where all prices are positive
