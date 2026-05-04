@@ -69,7 +69,9 @@ def load_data(token: str | None = None) -> pd.DataFrame:
 
 
 def upload_results(local_path: Path | str, remote_path: str, token: str) -> None:
-    """Upload a single file to the HF results dataset."""
+    """Upload a single file to the HF results dataset with retry on rate limit."""
+    import time
+
     local_path = Path(local_path)
     api = HfApi(token=token)
 
@@ -79,14 +81,27 @@ def upload_results(local_path: Path | str, remote_path: str, token: str) -> None
         exist_ok=True,
         private=False,
     )
-    api.upload_file(
-        path_or_fileobj=str(local_path),
-        path_in_repo=remote_path,
-        repo_id=OUTPUT_REPO,
-        repo_type="dataset",
-        commit_message=f"Update {remote_path}",
-    )
-    print(f"Uploaded {local_path} -> {OUTPUT_REPO}/{remote_path}")
+
+    for attempt in range(3):
+        try:
+            api.upload_file(
+                path_or_fileobj=str(local_path),
+                path_in_repo=remote_path,
+                repo_id=OUTPUT_REPO,
+                repo_type="dataset",
+                commit_message=f"Update {remote_path}",
+            )
+            print(f"Uploaded {local_path} -> {OUTPUT_REPO}/{remote_path}")
+            return
+        except Exception as e:
+            if "429" in str(e) and attempt < 2:
+                wait = 90 * (attempt + 1)
+                print(
+                    f"Rate limited — waiting {wait}s before retry {attempt + 2}/3 ..."
+                )
+                time.sleep(wait)
+            else:
+                raise
 
 
 def upload_folder(local_dir: Path | str, remote_dir: str, token: str) -> None:
