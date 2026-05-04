@@ -121,10 +121,6 @@ def main() -> None:
 
     if token:
         upload_results(summary_path, f"{args.model}/summary.json", token)
-        # Upload all pkl files as a single commit via upload_folder
-        from utils import upload_folder
-
-        upload_folder(output_dir, f"models/{args.model}", token)
 
 
 if __name__ == "__main__":
