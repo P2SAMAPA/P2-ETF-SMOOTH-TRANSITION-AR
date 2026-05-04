@@ -1,65 +1,94 @@
 name: Train Smooth Transition Models
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   schedule:
-    - cron: '0 0 1 * *'   # monthly on 1st
+    - cron: "0 0 1 * *"  # monthly on 1st
   workflow_dispatch:
 
 jobs:
-  train:
+  diagnostics:
+    name: Linearity Diagnostics
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run diagnostics
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python run_diagnostics.py
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+  train:
+    name: Train — ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    needs: diagnostics
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [setar, lstar, estar]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Train ${{ matrix.model }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python run_training.py --model ${{ matrix.model }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: models-${{ matrix.model }}-${{ github.run_id }}
+          path: models/${{ matrix.model }}/
+          retention-days: 7
 
-    - name: Cache pip dependencies
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Run linearity diagnostics
-      run: python run_diagnostics.py
-
-    - name: Train SETAR models
-      run: python run_training.py --model setar
-
-    - name: Train LSTAR models
-      run: python run_training.py --model lstar
-
-    - name: Train ESTAR models
-      run: python run_training.py --model estar
-
-    - name: Run walk‑forward backtest
-      run: python run_backtest.py
-
-    - name: Upload results to Hugging Face
-      env:
-        HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      run: python upload_results.py
-
-    - name: Upload artifacts (for debugging)
-      uses: actions/upload-artifact@v4
-      with:
-        name: smooth-transition-results
-        path: |
-          models/
-          backtest/
-          diagnostics/
+  backtest:
+    name: Walk-Forward Backtest
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs: train
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Download all model artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: models-*-${{ github.run_id }}
+          path: models/
+          merge-multiple: true
+      - name: Run backtest
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python run_backtest.py
+      - name: Print summary
+        run: |
+          python3 - << 'PYEOF'
+          import pandas as pd, pathlib
+          p = pathlib.Path("backtest/backtest_summary.csv")
+          if p.exists():
+              df = pd.read_csv(p)
+              print(f"Backtest rows: {len(df)}")
+              print(df.sort_values("sharpe", ascending=False).head(10).to_string(index=False))
+          else:
+              print("No backtest CSV found")
+          PYEOF
+      - name: Upload backtest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-${{ github.run_id }}
+          path: backtest/
+          retention-days: 7
