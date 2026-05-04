@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Walk‑forward backtest for STAR models (SETAR/LSTAR/ESTAR)."""
-
 import argparse
 import pickle
 import yaml
@@ -25,46 +23,59 @@ def main():
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    wf = WalkForwardBacktest(window_size=config["backtest"]["window_size"], step_size=config["backtest"]["step_size"])
+    wf = WalkForwardBacktest(window_size=252, step_size=63)  # fixed, ignore config for now
     all_rows = []
 
     for model_type in ["setar", "lstar", "estar"]:
         model_dir = Path(args.models) / model_type
         if not model_dir.exists():
+            print(f"Skipping {model_type} – no directory")
             continue
         for pkl_file in model_dir.glob("*.pkl"):
+            # filename: e.g., IWF_p2_d1.pkl
             parts = pkl_file.stem.split('_')
+            if len(parts) < 3:
+                print(f"Skipping {pkl_file.name}: malformed name")
+                continue
+            ticker = parts[0]
             try:
-                p = int(parts[1].replace('p',''))
-                d = int(parts[2].replace('d',''))
-                ticker = parts[0]
+                p = int(parts[1][1:])  # 'p2' -> 2
+                d = int(parts[2][1:])  # 'd1' -> 1
             except:
+                print(f"Skipping {pkl_file.name}: cannot parse p/d")
                 continue
+
             if ticker not in returns.columns:
+                print(f"Skipping {ticker}: not in returns data")
                 continue
+
             y = returns[ticker].dropna().values
-            if len(y) < config["backtest"]["window_size"] + config["backtest"]["step_size"]:
+            if len(y) < 252 + 63:
+                print(f"Skipping {ticker}: series too short ({len(y)})")
                 continue
+
+            print(f"Backtesting {model_type} {ticker} p={p} d={d} ...")
             with open(pkl_file, "rb") as f:
                 model = pickle.load(f)
-            # walk‑forward
+
             predictions = []
             actuals = []
             T = len(y)
-            window = config["backtest"]["window_size"]
-            step = config["backtest"]["step_size"]
+            window = 252
+            step = 63
             for start in range(0, T - window - step, step):
                 end = start + window
                 train = y[start:end]
+                # Re‑create a fresh model instance
                 new_model = type(model)(p=p, d=d)
                 new_model.fit(train)
                 for i in range(step):
-                    if end + i < len(y):
+                    if end + i < T:
                         hist = y[:end + i]
                         pred = new_model.predict(hist)
                         predictions.append(pred)
                         actuals.append(y[end + i])
-            if predictions:
+            if len(predictions) > 0:
                 metrics = wf.evaluate(np.array(predictions), np.array(actuals))
                 all_rows.append({
                     "model_type": model_type,
@@ -77,13 +88,19 @@ def main():
                     "mean_return": metrics["mean_return"],
                     "volatility": metrics["volatility"]
                 })
+                print(f"  -> Added {len(predictions)} predictions, Sharpe={metrics['sharpe']:.2f}")
+            else:
+                print(f"  -> No predictions generated")
 
-    df = pd.DataFrame(all_rows)
-    df.to_csv(output_dir / "backtest_summary.csv", index=False)
-    print(f"Saved {len(df)} rows to backtest_summary.csv")
+    if all_rows:
+        df = pd.DataFrame(all_rows)
+        df.to_csv(output_dir / "backtest_summary.csv", index=False)
+        print(f"Saved {len(df)} rows to backtest_summary.csv")
+    else:
+        print("No backtest results were generated. Check model files and data.")
 
     token = os.environ.get("HF_TOKEN")
-    if token:
+    if token and output_dir.exists() and (output_dir / "backtest_summary.csv").exists():
         upload_results(output_dir / "backtest_summary.csv", "backtest_summary.csv", token)
 
 if __name__ == "__main__":
