@@ -33,8 +33,9 @@ def load_data(token: str | None = None) -> pd.DataFrame:
     # Data is already closing prices with tickers as columns — forward-fill gaps
     prices = df.ffill()
 
-    # Keep only positive-price columns
-    prices = prices[(prices > 0).all(axis=0)]
+    # Keep only columns where all prices are positive
+    good_cols = (prices > 0).all(axis=0)
+    prices = prices.loc[:, good_cols]
 
     # Log returns
     log_returns = np.log(prices / prices.shift(1)).dropna()
