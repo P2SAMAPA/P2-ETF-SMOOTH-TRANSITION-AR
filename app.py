@@ -3,64 +3,104 @@ import pandas as pd
 import numpy as np
 import json
 import plotly.graph_objects as go
-from huggingface_hub import HfFileSystem, HfApi
+from huggingface_hub import HfFileSystem
 import os
 
 st.set_page_config(page_title="Smooth Transition AR", layout="wide")
 st.title("📈 Smooth Transition Autoregressive (STAR) Models")
 st.caption("Regime‑based forecasting for ETFs | SETAR / LSTAR / ESTAR")
 
-# ---------- Configuration ----------
 OUTPUT_REPO = "P2SAMAPA/p2-etf-smooth-transition-results"
-HF_TOKEN = os.environ.get("HF_TOKEN", None)  # set in Streamlit secrets
+HF_TOKEN = os.environ.get("HF_TOKEN", None)
 
-# Debug: show token status
-if HF_TOKEN:
-    st.sidebar.success("HF_TOKEN is set")
-else:
-    st.sidebar.warning("HF_TOKEN not set – trying without token (public dataset only)")
-
-# ---------- Helper to load JSON ----------
+# Helper to list all files in the HF repo recursively
 @st.cache_data(ttl=3600)
-def load_json(remote_path):
+def list_repo_files():
+    fs = HfFileSystem(token=HF_TOKEN)
+    all_files = []
+    try:
+        # List the entire repo recursively
+        for info in fs.ls(f"datasets/{OUTPUT_REPO}", detail=True, recursive=True):
+            if info['type'] == 'file':
+                all_files.append(info['name'])
+    except Exception as e:
+        st.error(f"Cannot list repo: {e}")
+    return all_files
+
+# Helper to load JSON from any path
+@st.cache_data(ttl=3600)
+def load_json_from_path(remote_path):
     fs = HfFileSystem(token=HF_TOKEN)
     try:
-        with fs.open(f"datasets/{OUTPUT_REPO}/{remote_path}", "r") as f:
+        with fs.open(remote_path, "r") as f:
             return json.load(f)
     except Exception as e:
-        st.error(f"Failed to load {remote_path}: {e}")
         return None
 
+# Helper to load CSV from any path
 @st.cache_data(ttl=3600)
-def load_csv(remote_path):
+def load_csv_from_path(remote_path):
     fs = HfFileSystem(token=HF_TOKEN)
     try:
-        with fs.open(f"datasets/{OUTPUT_REPO}/{remote_path}", "r") as f:
+        with fs.open(remote_path, "r") as f:
             return pd.read_csv(f)
     except Exception as e:
-        st.error(f"Failed to load {remote_path}: {e}")
         return None
 
-# ---------- Sidebar ----------
+# Sidebar
 model_type = st.sidebar.selectbox("Model type", ["setar", "lstar", "estar"])
 universe = st.sidebar.selectbox("Universe", ["FI_COMMODITIES", "EQUITY_SECTORS", "COMBINED"])
 
-# ---------- Load data ----------
-summary = load_json(f"{model_type}/summary.json")
-backtest = load_csv("backtest_summary.csv")
-diag = load_csv("linearity_tests.csv")
+# List all files in the repo
+st.subheader("📂 Files in HF repository")
+files = list_repo_files()
+st.write(f"Total files: {len(files)}")
+if files:
+    for f in sorted(files):
+        st.code(f, language="text")
+else:
+    st.warning("No files found. Run the GitHub workflow again.")
+
+# Dynamically find the summary JSON for the selected model type
+summary_path = None
+for f in files:
+    if f.endswith(f"{model_type}/summary.json") or f == f"{model_type}/summary.json":
+        summary_path = f"datasets/{OUTPUT_REPO}/{f}"
+        break
+if summary_path:
+    summary = load_json_from_path(summary_path)
+else:
+    summary = None
+
+# Find backtest CSV
+backtest_path = None
+for f in files:
+    if "backtest_summary.csv" in f:
+        backtest_path = f"datasets/{OUTPUT_REPO}/{f}"
+        break
+backtest = load_csv_from_path(backtest_path) if backtest_path else None
+
+# Find diagnostics CSV
+diag_path = None
+for f in files:
+    if "linearity_tests.csv" in f:
+        diag_path = f"datasets/{OUTPUT_REPO}/{f}"
+        break
+diag = load_csv_from_path(diag_path) if diag_path else None
 
 # Debug expander
-with st.expander("🔍 Debug info (show loaded data)"):
+with st.expander("🔍 Debug info (loaded files)"):
+    st.write("Summary path:", summary_path)
     st.write("Summary keys:", list(summary.keys())[:5] if summary else "None")
+    st.write("Backtest path:", backtest_path)
     st.write("Backtest shape:", backtest.shape if backtest is not None else "None")
     st.write("Diagnostics shape:", diag.shape if diag is not None else "None")
 
 if summary is None:
-    st.warning(f"No summary found for {model_type}. Make sure training has finished and files are uploaded to HF.")
+    st.error(f"No summary found for model type '{model_type}'. Ensure training finished and files are uploaded.")
     st.stop()
 
-# ---------- Helper to get ticker list from universe ----------
+# ---- Tickers list ----
 tickers_map = {
     "FI_COMMODITIES": ["TLT", "VCIT", "LQD", "HYG", "VNQ", "GLD", "SLV"],
     "EQUITY_SECTORS": ["SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP", "XLU", "GDX", "XME", "IWF", "XSD", "XBI", "IWM"]
@@ -70,7 +110,7 @@ if universe == "COMBINED":
 else:
     all_tickers = tickers_map[universe]
 
-# ---------- Linearity diagnostics ----------
+# ---- Diagnostics ----
 st.header("Linearity Diagnostics")
 if diag is not None:
     diag_sub = diag[diag["ticker"].isin(all_tickers)]
@@ -78,7 +118,7 @@ if diag is not None:
 else:
     st.info("Diagnostics file not found.")
 
-# ---------- Backtest performance ----------
+# ---- Backtest ----
 st.header("Backtest Performance (Walk‑Forward)")
 if backtest is not None and len(backtest) > 0:
     bt = backtest[backtest["model_type"] == model_type]
@@ -88,12 +128,11 @@ if backtest is not None and len(backtest) > 0:
 else:
     st.info("No backtest results for this model type.")
 
-# ---------- Recommendation ----------
+# ---- Recommendation ----
 st.header("📌 Trading Recommendation for Next Trading Day")
 if backtest is not None and not backtest.empty:
     bt_model = backtest[backtest["model_type"] == model_type]
-    # pick ticker with highest Sharpe ratio among those in universe
-    best = None
+    best_ticker = None
     best_sharpe = -np.inf
     for ticker in all_tickers:
         sub = bt_model[bt_model["ticker"] == ticker]
@@ -101,14 +140,14 @@ if backtest is not None and not backtest.empty:
             sharpe = sub["sharpe"].max()
             if sharpe > best_sharpe:
                 best_sharpe = sharpe
-                best = ticker
-    if best:
-        st.success(f"**Recommended ETF:** {best}")
+                best_ticker = ticker
+    if best_ticker:
+        st.success(f"**Recommended ETF:** {best_ticker}")
         st.caption(f"Best Sharpe ratio ({best_sharpe:.2f}) among {model_type} models.")
         # Show threshold if SETAR
         if model_type == "setar" and summary is not None:
             for key, val in summary.items():
-                if key.startswith(best):
+                if key.startswith(best_ticker):
                     st.write("**Estimated threshold (c):**", val.get("params", {}).get("c", "N/A"))
                     break
     else:
