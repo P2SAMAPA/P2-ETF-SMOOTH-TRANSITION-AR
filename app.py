@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import json
+import io
 import plotly.graph_objects as go
 from huggingface_hub import HfFileSystem
 import os
@@ -25,36 +26,30 @@ def list_repo_files():
         st.error(f"Cannot list repo: {e}")
     return all_files
 
-def load_json_from_fullpath(full_path):
+def load_json(full_path):
     fs = HfFileSystem(token=HF_TOKEN)
     try:
         with fs.open(full_path, "r") as f:
             return json.load(f)
     except Exception as e:
-        st.error(f"JSON load error {full_path}: {e}")
+        st.error(f"JSON error {full_path}: {e}")
         return None
 
-def load_csv_from_fullpath(full_path):
+def load_csv(full_path):
     fs = HfFileSystem(token=HF_TOKEN)
     try:
         with fs.open(full_path, "r") as f:
             content = f.read()
-            # Check if empty or just header
             if not content.strip():
                 st.warning(f"CSV file {full_path} is empty")
                 return None
-            # Try reading, show first few lines on error
-            try:
-                df = pd.read_csv(pd.compat.StringIO(content))
-                if df.empty:
-                    st.warning(f"CSV file {full_path} has no data rows")
-                return df
-            except Exception as e:
-                st.error(f"CSV parse error {full_path}: {e}")
-                st.code(content[:500], language="text")
-                return None
+            # Use io.StringIO to avoid pandas.compat issue
+            df = pd.read_csv(io.StringIO(content))
+            if df.empty:
+                st.warning(f"CSV file {full_path} has no data rows")
+            return df
     except Exception as e:
-        st.error(f"Cannot open {full_path}: {e}")
+        st.error(f"CSV error {full_path}: {e}")
         return None
 
 # Sidebar
@@ -73,24 +68,25 @@ for f in files:
     if f"models/{model_type}/summary.json" in f:
         summary_path = f
         break
-summary = load_json_from_fullpath(summary_path) if summary_path else None
+summary = load_json(summary_path) if summary_path else None
 
-# Find backtest
+# Find backtest CSV
 backtest_path = None
 for f in files:
     if "backtest_summary.csv" in f:
         backtest_path = f
         break
-backtest = load_csv_from_fullpath(backtest_path) if backtest_path else None
+backtest = load_csv(backtest_path) if backtest_path else None
 
-# Find diagnostics
+# Find diagnostics CSV
 diag_path = None
 for f in files:
     if "linearity_tests.csv" in f:
         diag_path = f
         break
-diag = load_csv_from_fullpath(diag_path) if diag_path else None
+diag = load_csv(diag_path) if diag_path else None
 
+# Debug info
 with st.expander("🔍 Debug info"):
     st.write("Summary path:", summary_path)
     st.write("Summary keys:", list(summary.keys())[:5] if summary else "None")
