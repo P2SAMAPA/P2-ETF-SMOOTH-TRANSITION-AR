@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-import argparse, pickle, yaml, os
+import argparse
+import pickle
+import yaml
+import os
+import numpy as np  # <-- added
 from pathlib import Path
 import pandas as pd
 from backtest import WalkForwardBacktest
@@ -34,6 +38,10 @@ def main():
             if ticker not in returns.columns:
                 continue
             y = returns[ticker].dropna().values
+            # skip if any inf or nan (could happen with bad data)
+            if not np.isfinite(y).all():
+                print(f"Skipping {ticker} due to non-finite returns")
+                continue
             # reload model class
             with open(pkl_file, "rb") as f:
                 model = pickle.load(f)
