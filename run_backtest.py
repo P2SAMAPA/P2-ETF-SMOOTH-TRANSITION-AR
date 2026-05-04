@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+"""Walk‑forward backtest for STAR models (SETAR/LSTAR/ESTAR)."""
+
 import argparse
 import pickle
 import yaml
 import os
-import numpy as np  # <-- added
+import numpy as np
 from pathlib import Path
 import pandas as pd
 from backtest import WalkForwardBacktest
@@ -32,17 +34,17 @@ def main():
             continue
         for pkl_file in model_dir.glob("*.pkl"):
             parts = pkl_file.stem.split('_')
-            p = int([x for x in parts if x.startswith('p')][0][1:])
-            d = int([x for x in parts if x.startswith('d')][0][1:])
-            ticker = parts[0]
+            try:
+                p = int(parts[1].replace('p',''))
+                d = int(parts[2].replace('d',''))
+                ticker = parts[0]
+            except:
+                continue
             if ticker not in returns.columns:
                 continue
             y = returns[ticker].dropna().values
-            # skip if any inf or nan (could happen with bad data)
-            if not np.isfinite(y).all():
-                print(f"Skipping {ticker} due to non-finite returns")
+            if len(y) < config["backtest"]["window_size"] + config["backtest"]["step_size"]:
                 continue
-            # reload model class
             with open(pkl_file, "rb") as f:
                 model = pickle.load(f)
             # walk‑forward
@@ -65,12 +67,20 @@ def main():
             if predictions:
                 metrics = wf.evaluate(np.array(predictions), np.array(actuals))
                 all_rows.append({
-                    "model_type": model_type, "ticker": ticker, "p": p, "d": d,
-                    **metrics
+                    "model_type": model_type,
+                    "ticker": ticker,
+                    "p": p,
+                    "d": d,
+                    "sharpe": metrics["sharpe"],
+                    "hit_rate": metrics["hit_rate"],
+                    "max_drawdown": metrics["max_drawdown"],
+                    "mean_return": metrics["mean_return"],
+                    "volatility": metrics["volatility"]
                 })
+
     df = pd.DataFrame(all_rows)
     df.to_csv(output_dir / "backtest_summary.csv", index=False)
-    print(f"Backtest complete. {len(df)} entries.")
+    print(f"Saved {len(df)} rows to backtest_summary.csv")
 
     token = os.environ.get("HF_TOKEN")
     if token:
