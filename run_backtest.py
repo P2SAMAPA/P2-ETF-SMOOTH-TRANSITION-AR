@@ -1,107 +1,142 @@
 #!/usr/bin/env python3
+"""run_backtest.py — Walk-forward backtest using saved model parameters."""
+
+from __future__ import annotations
+
 import argparse
-import pickle
-import yaml
+import json
 import os
-import numpy as np
 from pathlib import Path
+
 import pandas as pd
+
 from backtest import WalkForwardBacktest
+from estar import ESTAR
+from lstar import LSTAR
+from setar import SETAR
 from utils import load_data, upload_results
 
-def main():
+MODEL_CLASSES = {"setar": SETAR, "lstar": LSTAR, "estar": ESTAR}
+
+
+def restore_model(model_type: str, p: int, d: int, params: dict):
+    """Reconstruct a fitted model from saved parameters (no pkl needed)."""
+    cls = MODEL_CLASSES[model_type]
+    model = cls(p=p, d=d)
+
+    if model_type == "setar":
+        import numpy as np
+        from sklearn.linear_model import LinearRegression
+
+        model.c_ = params["c"]
+        model.phi1_ = np.array(params["phi1"])
+        model.phi2_ = np.array(params["phi2"])
+        # Rebuild dummy regressors so predict() works
+        model.reg1_ = LinearRegression(fit_intercept=False)
+        model.reg1_.coef_ = model.phi1_
+        model.reg2_ = LinearRegression(fit_intercept=False)
+        model.reg2_.coef_ = model.phi2_
+
+    elif model_type in ("lstar", "estar"):
+        model.gamma_ = params["gamma"]
+        model.c_ = params["c"]
+        model.phi1_ = np.array(params["phi1"])
+        model.phi2_ = np.array(params["phi2"])
+
+    return model
+
+
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--models", default="models/")
-    parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--output", default="backtest/")
     args = parser.parse_args()
 
-    with open(args.config) as f:
-        config = yaml.safe_load(f)
+    token = os.environ.get("HF_TOKEN")
+    returns = load_data(token=token)
 
-    returns = load_data()
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    wf = WalkForwardBacktest(window_size=252, step_size=63)  # fixed, ignore config for now
-    all_rows = []
+    wf = WalkForwardBacktest(window_size=252, step_size=63)
+    all_rows: list[dict] = []
 
     for model_type in ["setar", "lstar", "estar"]:
-        model_dir = Path(args.models) / model_type
-        if not model_dir.exists():
-            print(f"Skipping {model_type} – no directory")
+        summary_path = Path(args.models) / model_type / "summary.json"
+        if not summary_path.exists():
+            print(f"No summary for {model_type} — skipping")
             continue
-        for pkl_file in model_dir.glob("*.pkl"):
-            # filename: e.g., IWF_p2_d1.pkl
-            parts = pkl_file.stem.split('_')
+
+        with open(summary_path) as f:
+            summary = json.load(f)
+
+        print(f"\n{'='*50}")
+        print(f"Backtesting {model_type.upper()} ({len(summary)} models)")
+        print(f"{'='*50}")
+
+        for key, meta in summary.items():
+            # key format: TICKER_pP_dD
+            parts = key.split("_")
             if len(parts) < 3:
-                print(f"Skipping {pkl_file.name}: malformed name")
                 continue
             ticker = parts[0]
             try:
-                p = int(parts[1][1:])  # 'p2' -> 2
-                d = int(parts[2][1:])  # 'd1' -> 1
-            except:
-                print(f"Skipping {pkl_file.name}: cannot parse p/d")
+                p = int(parts[1][1:])
+                d = int(parts[2][1:])
+            except (ValueError, IndexError):
+                print(f"  Skipping {key}: cannot parse p/d")
                 continue
 
             if ticker not in returns.columns:
-                print(f"Skipping {ticker}: not in returns data")
+                print(f"  Skipping {ticker}: not in returns")
                 continue
 
             y = returns[ticker].dropna().values
             if len(y) < 252 + 63:
-                print(f"Skipping {ticker}: series too short ({len(y)})")
+                print(f"  Skipping {ticker}: series too short ({len(y)})")
                 continue
 
-            print(f"Backtesting {model_type} {ticker} p={p} d={d} ...")
-            with open(pkl_file, "rb") as f:
-                model = pickle.load(f)
+            params = meta.get("params", {})
 
-            predictions = []
-            actuals = []
-            T = len(y)
-            window = 252
-            step = 63
-            for start in range(0, T - window - step, step):
-                end = start + window
-                train = y[start:end]
-                # Re‑create a fresh model instance
-                new_model = type(model)(p=p, d=d)
-                new_model.fit(train)
-                for i in range(step):
-                    if end + i < T:
-                        hist = y[:end + i]
-                        pred = new_model.predict(hist)
-                        predictions.append(pred)
-                        actuals.append(y[end + i])
-            if len(predictions) > 0:
-                metrics = wf.evaluate(np.array(predictions), np.array(actuals))
-                all_rows.append({
+            print(f"  {ticker} p={p} d={d} ...", end=" ", flush=True)
+            predictions, actuals = wf.run(
+                model_type=model_type, p=p, d=d, params=params, returns=y
+            )
+
+            if len(predictions) == 0:
+                print("no predictions")
+                continue
+
+            metrics = wf.evaluate(predictions, actuals)
+            all_rows.append(
+                {
                     "model_type": model_type,
                     "ticker": ticker,
                     "p": p,
                     "d": d,
-                    "sharpe": metrics["sharpe"],
-                    "hit_rate": metrics["hit_rate"],
-                    "max_drawdown": metrics["max_drawdown"],
-                    "mean_return": metrics["mean_return"],
-                    "volatility": metrics["volatility"]
-                })
-                print(f"  -> Added {len(predictions)} predictions, Sharpe={metrics['sharpe']:.2f}")
-            else:
-                print(f"  -> No predictions generated")
+                    "sharpe": round(metrics["sharpe"], 4),
+                    "hit_rate": round(metrics["hit_rate"], 4),
+                    "max_drawdown": round(metrics["max_drawdown"], 4),
+                    "mean_return": round(metrics["mean_return"], 4),
+                    "volatility": round(metrics["volatility"], 4),
+                }
+            )
+            print(
+                f"Sharpe={metrics['sharpe']:.2f}  "
+                f"Hit={metrics['hit_rate']:.1%}  "
+                f"MDD={metrics['max_drawdown']:.1%}"
+            )
 
     if all_rows:
         df = pd.DataFrame(all_rows)
-        df.to_csv(output_dir / "backtest_summary.csv", index=False)
-        print(f"Saved {len(df)} rows to backtest_summary.csv")
+        out_csv = output_dir / "backtest_summary.csv"
+        df.to_csv(out_csv, index=False)
+        print(f"\nSaved {len(df)} rows → {out_csv}")
+        if token:
+            upload_results(out_csv, "backtest_summary.csv", token)
     else:
-        print("No backtest results were generated. Check model files and data.")
+        print("\nNo backtest results generated.")
 
-    token = os.environ.get("HF_TOKEN")
-    if token and output_dir.exists() and (output_dir / "backtest_summary.csv").exists():
-        upload_results(output_dir / "backtest_summary.csv", "backtest_summary.csv", token)
 
 if __name__ == "__main__":
     main()
