@@ -1,46 +1,65 @@
-import pandas as pd
-import numpy as np
-import json
+"""utils.py — Data loading and HuggingFace upload utilities."""
+
+from __future__ import annotations
+
 from pathlib import Path
-from huggingface_hub import hf_hub_download, HfFileSystem
+
+import numpy as np
+import pandas as pd
+from huggingface_hub import HfApi, hf_hub_download
 
 RAW_DATA_REPO = "P2SAMAPA/fi-etf-macro-signal-master-data"
 RAW_DATA_FILE = "master_data.parquet"
 OUTPUT_REPO = "P2SAMAPA/p2-etf-smooth-transition-results"
 
-def load_data(token=None):
+
+def load_data(token: str | None = None) -> pd.DataFrame:
+    """Load master data and return log-return DataFrame (tickers as columns)."""
     file_path = hf_hub_download(
         repo_id=RAW_DATA_REPO,
         filename=RAW_DATA_FILE,
         repo_type="dataset",
-        token=token
+        token=token,
+        cache_dir="./hf_cache",
     )
     df = pd.read_parquet(file_path)
-    if 'Date' in df.columns:
-        df['Date'] = pd.to_datetime(df['Date'])
-        df.set_index('Date', inplace=True)
-    if 'Ticker' in df.columns:
-        df_wide = df.pivot(columns='Ticker', values='Close')
-    else:
-        df_wide = df
-    # Avoid log(0) or negative prices
-    df_wide = df_wide[df_wide > 0].dropna(axis=1, how='all')
-    rets = np.log(df_wide / df_wide.shift(1)).dropna()
-    return rets
 
-def upload_results(local_path, remote_path, token):
-    """Upload a file (text or binary) to HF dataset."""
-    fs = HfFileSystem(token=token)
+    # Normalise index — master data has DatetimeIndex or a Date column
+    if isinstance(df.index, pd.DatetimeIndex):
+        df = df.reset_index().rename(columns={"index": "Date"})
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").set_index("Date")
+
+    # Data is already closing prices with tickers as columns — forward-fill gaps
+    prices = df.ffill()
+
+    # Keep only positive-price columns
+    prices = prices[(prices > 0).all(axis=0)]
+
+    # Log returns
+    log_returns = np.log(prices / prices.shift(1)).dropna()
+    print(f"Loaded {len(log_returns)} rows × {len(log_returns.columns)} tickers")
+    return log_returns
+
+
+def upload_results(local_path: Path | str, remote_path: str, token: str) -> None:
+    """Upload a file to the HF results dataset using reliable HfApi.upload_file."""
     local_path = Path(local_path)
-    remote_full = f"datasets/{OUTPUT_REPO}/{remote_path}"
-    # Determine if it's a text file
-    is_text = local_path.suffix in ['.json', '.csv', '.txt', '.yaml', '.yml']
-    mode = 'w' if is_text else 'wb'
-    with fs.open(remote_full, mode) as f:
-        if is_text:
-            with open(local_path, 'r') as src:
-                f.write(src.read())
-        else:
-            with open(local_path, 'rb') as src:
-                f.write(src.read())
-    print(f"Uploaded {local_path} -> {remote_full}")
+    api = HfApi(token=token)
+
+    # Ensure repo exists
+    api.create_repo(
+        repo_id=OUTPUT_REPO,
+        repo_type="dataset",
+        exist_ok=True,
+        private=False,
+    )
+
+    api.upload_file(
+        path_or_fileobj=str(local_path),
+        path_in_repo=remote_path,
+        repo_id=OUTPUT_REPO,
+        repo_type="dataset",
+        commit_message=f"Update {remote_path}",
+    )
+    print(f"Uploaded {local_path} → {OUTPUT_REPO}/{remote_path}")
