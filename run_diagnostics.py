@@ -56,6 +56,10 @@ def main() -> None:
         )
         print(f"nonlinear={nonlinear}  lm_p={lm_p:.3f}")
 
+    if not rows:
+        print("No diagnostics computed — check ticker names match data columns.")
+        return
+
     df = pd.DataFrame(rows)
     out_csv = output_dir / "linearity_tests.csv"
     df.to_csv(out_csv, index=False)
