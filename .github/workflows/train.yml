@@ -1,0 +1,41 @@
+name: Train Smooth Transition Models
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 1 * *'   # monthly on 1st
+  workflow_dispatch:
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Cache pip
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+    - name: Run diagnostics
+      run: python run_diagnostics.py
+    - name: Train SETAR
+      run: python run_training.py --model setar
+    - name: Train LSTAR
+      run: python run_training.py --model lstar
+    - name: Train ESTAR
+      run: python run_training.py --model estar
+    - name: Run backtest
+      run: python run_backtest.py
+    - name: Upload to Hugging Face
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      run: python upload_results.py
