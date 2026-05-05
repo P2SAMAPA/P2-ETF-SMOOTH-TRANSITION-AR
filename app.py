@@ -113,7 +113,7 @@ def fmt_pct(v: float) -> str:
     return f"{v * 100:+.2f}%"
 
 
-def fmt_sharpe(v: float) -> str:
+def fmt_sortino(v: float) -> str:
     return f"{v:.3f}"
 
 
@@ -121,7 +121,7 @@ def fmt_sharpe(v: float) -> str:
 st.markdown("# 📈 Smooth Transition AR Models")
 st.caption(
     "Regime-based forecasting: SETAR · LSTAR · ESTAR | "
-    "Walk-forward backtest | Sharpe-ranked ETF recommendations"
+    "Walk-forward backtest | Sortino-ranked ETF recommendations"
 )
 
 backtest = load_backtest()
@@ -235,37 +235,37 @@ with tab_backtest:
         if bt.empty:
             st.info(f"No backtest results for {model_type.upper()} in {universe}.")
         else:
-            # Best config per ticker (highest Sharpe)
-            bt_best = bt.sort_values("sharpe", ascending=False).drop_duplicates(
+            # Best config per ticker (highest Sortino)
+            bt_best = bt.sort_values("sortino", ascending=False).drop_duplicates(
                 "ticker"
             )
-            bt_best = bt_best.sort_values("sharpe", ascending=False)
+            bt_best = bt_best.sort_values("sortino", ascending=False)
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Tickers", len(bt_best))
-            m2.metric("Avg Sharpe", f"{bt_best['sharpe'].mean():.3f}")
+            m2.metric("Avg Sortino", f"{bt_best['sortino'].mean():.3f}")
             m3.metric("Avg Hit Rate", f"{bt_best['hit_rate'].mean():.1%}")
             m4.metric("Avg Max DD", f"{bt_best['max_drawdown'].mean():.1%}")
 
-            # Bar chart — Sharpe by ticker
+            # Bar chart — Sortino by ticker
             colours = [
                 "#27AE60" if s > 0.5 else "#F39C12" if s > 0 else "#E74C3C"
-                for s in bt_best["sharpe"]
+                for s in bt_best["sortino"]
             ]
             fig_bt = go.Figure(
                 go.Bar(
                     y=bt_best["ticker"],
-                    x=bt_best["sharpe"],
+                    x=bt_best["sortino"],
                     orientation="h",
                     marker_color=colours,
-                    text=[f"{s:.3f}" for s in bt_best["sharpe"]],
+                    text=[f"{s:.3f}" for s in bt_best["sortino"]],
                     textposition="outside",
                 )
             )
             fig_bt.add_vline(x=0, line_dash="dot", line_color="gray")
             fig_bt.update_layout(
-                title=f"Sharpe Ratio — {model_type.upper()} ({universe})",
-                xaxis_title="Sharpe Ratio",
+                title=f"Sortino Ratio — {model_type.upper()} ({universe})",
+                xaxis_title="Sortino Ratio",
                 yaxis=dict(autorange="reversed"),
                 height=max(300, len(bt_best) * 30),
                 margin=dict(t=40, b=30, l=60, r=80),
@@ -282,7 +282,7 @@ with tab_backtest:
                         "ticker",
                         "p",
                         "d",
-                        "sharpe",
+                        "sortino",
                         "hit_rate",
                         "max_drawdown",
                         "mean_return",
@@ -291,7 +291,7 @@ with tab_backtest:
                 ]
                 .rename(
                     columns={
-                        "sharpe": "Sharpe",
+                        "sortino": "Sortino",
                         "hit_rate": "Hit Rate",
                         "max_drawdown": "Max DD",
                         "mean_return": "Ann. Return",
@@ -300,7 +300,7 @@ with tab_backtest:
                 )
                 .style.format(
                     {
-                        "Sharpe": "{:.3f}",
+                        "Sortino": "{:.3f}",
                         "Hit Rate": "{:.1%}",
                         "Max DD": "{:.1%}",
                         "Ann. Return": "{:.1%}",
@@ -311,28 +311,28 @@ with tab_backtest:
                 hide_index=True,
             )
 
-            # Scatter: Sharpe vs Hit Rate
+            # Scatter: Sortino vs Hit Rate
             fig_scatter = go.Figure(
                 go.Scatter(
                     x=bt_best["hit_rate"],
-                    y=bt_best["sharpe"],
+                    y=bt_best["sortino"],
                     mode="markers+text",
                     text=bt_best["ticker"],
                     textposition="top center",
                     marker=dict(
                         size=10,
-                        color=bt_best["sharpe"],
+                        color=bt_best["sortino"],
                         colorscale="RdYlGn",
-                        colorbar=dict(title="Sharpe"),
+                        colorbar=dict(title="Sortino"),
                         showscale=True,
                     ),
                 )
             )
             fig_scatter.add_hline(y=0, line_dash="dot", line_color="gray")
             fig_scatter.update_layout(
-                title="Sharpe vs Hit Rate",
+                title="Sortino vs Hit Rate",
                 xaxis_title="Hit Rate",
-                yaxis_title="Sharpe",
+                yaxis_title="Sortino",
                 height=400,
                 plot_bgcolor="rgba(0,0,0,0)",
                 paper_bgcolor="rgba(0,0,0,0)",
@@ -348,15 +348,15 @@ with tab_recommend:
             (backtest["model_type"] == model_type)
             & (backtest["ticker"].isin(all_tickers))
         ]
-        bt_best = bt.sort_values("sharpe", ascending=False).drop_duplicates("ticker")
+        bt_best = bt.sort_values("sortino", ascending=False).drop_duplicates("ticker")
 
         if not bt_best.empty:
             top = bt_best.iloc[0]
-            sharpe_val = float(top["sharpe"])
+            sortino_val = float(top["sortino"])
             signal = (
                 "STRONG"
-                if sharpe_val > 0.5
-                else "MODERATE" if sharpe_val > 0 else "WEAK"
+                if sortino_val > 0.5
+                else "MODERATE" if sortino_val > 0 else "WEAK"
             )
             sig_colour = {
                 "STRONG": "#27AE60",
@@ -373,7 +373,7 @@ with tab_recommend:
                     unsafe_allow_html=True,
                 )
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Sharpe", f"{sharpe_val:.3f}")
+                c1.metric("Sortino", f"{sortino_val:.3f}")
                 c2.metric("Hit Rate", f"{float(top['hit_rate']):.1%}")
                 c3.metric("Max DD", f"{float(top['max_drawdown']):.1%}")
                 c4.metric("Ann. Return", f"{float(top['mean_return']):.1%}")
@@ -384,12 +384,14 @@ with tab_recommend:
 
             with m_col:
                 # Top 5 ranked
-                st.markdown("**Top 5 ETFs by Sharpe**")
-                top5 = bt_best.head(5)[["ticker", "sharpe", "hit_rate", "max_drawdown"]]
+                st.markdown("**Top 5 ETFs by Sortino**")
+                top5 = bt_best.head(5)[
+                    ["ticker", "sortino", "hit_rate", "max_drawdown"]
+                ]
                 st.dataframe(
                     top5.style.format(
                         {
-                            "sharpe": "{:.3f}",
+                            "sortino": "{:.3f}",
                             "hit_rate": "{:.1%}",
                             "max_drawdown": "{:.1%}",
                         }
