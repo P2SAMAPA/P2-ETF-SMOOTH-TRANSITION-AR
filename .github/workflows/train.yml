@@ -82,7 +82,7 @@ jobs:
           if p.exists():
               df = pd.read_csv(p)
               print(f"Backtest rows: {len(df)}")
-              print(df.sort_values("sharpe", ascending=False).head(10).to_string(index=False))
+              print(df.sort_values("sortino", ascending=False).head(10).to_string(index=False))
           else:
               print("No backtest CSV found")
           PYEOF
