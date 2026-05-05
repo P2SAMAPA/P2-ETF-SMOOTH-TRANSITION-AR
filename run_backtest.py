@@ -137,7 +137,7 @@ def main() -> None:
                     "ticker": ticker,
                     "p": p,
                     "d": d,
-                    "sharpe": round(metrics["sharpe"], 4),
+                    "sortino": round(metrics["sortino"], 4),
                     "hit_rate": round(metrics["hit_rate"], 4),
                     "max_drawdown": round(metrics["max_drawdown"], 4),
                     "mean_return": round(metrics["mean_return"], 4),
@@ -145,7 +145,7 @@ def main() -> None:
                 }
             )
             print(
-                f"Sharpe={metrics['sharpe']:.2f}  "
+                f"Sortino={metrics['sortino']:.2f}  "
                 f"Hit={metrics['hit_rate']:.1%}  "
                 f"MDD={metrics['max_drawdown']:.1%}"
             )
