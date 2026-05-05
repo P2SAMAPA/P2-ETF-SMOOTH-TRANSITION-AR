@@ -48,6 +48,8 @@ class WalkForwardBacktest:
                 hist = y[:idx]
                 try:
                     pred = float(np.squeeze(model.predict(hist)))
+                    if not np.isfinite(pred):
+                        pred = 0.0
                 except Exception:
                     pred = 0.0
                 predictions.append(pred)
@@ -58,13 +60,25 @@ class WalkForwardBacktest:
     def evaluate(
         self, predictions: np.ndarray, actuals: np.ndarray
     ) -> dict[str, float]:
-        signals = np.sign(predictions)
+        # Use threshold-based signal: long if prediction > median, flat otherwise
+        # This avoids all-zero signals when predictions cluster near zero
+        threshold = float(np.median(predictions))
+        signals = np.where(predictions > threshold, 1.0, -1.0)
         strategy_returns = signals * actuals
+
         std = np.std(strategy_returns)
+
+        # Sortino ratio — penalise downside only
+        downside = strategy_returns[strategy_returns < 0]
+        downside_std = float(np.std(downside)) if len(downside) > 1 else 1e-8
+        sortino = float(
+            np.mean(strategy_returns) / (downside_std + 1e-8) * np.sqrt(252)
+        )
+
         return {
             "mean_return": float(np.mean(strategy_returns) * 252),
             "volatility": float(std * np.sqrt(252)),
-            "sharpe": float(np.mean(strategy_returns) / (std + 1e-8) * np.sqrt(252)),
+            "sortino": sortino,
             "hit_rate": float(np.mean(strategy_returns > 0)),
             "max_drawdown": float(self._max_drawdown(strategy_returns)),
         }
